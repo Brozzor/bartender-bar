@@ -1,6 +1,11 @@
 #include <Arduino.h>
 #include "HX711.h"
 #include <WiFiManager.h>
+#include <WebSocketsClient.h>
+#include "secrets.h"
+
+// Websocket
+WebSocketsClient webSocket;
 
 // HX711 circuit wiring
 const int LOADCELL_DOUT_PIN = 19;
@@ -15,6 +20,7 @@ const unsigned int IN4 = 25;
 const unsigned int IN5 = 12;
 const unsigned int IN6 = 27;
 
+void webSocketEvent(WStype_t type, uint8_t * payload, size_t length);
 void startPump(int index, int time);
 void shutdownPumps();
 
@@ -47,6 +53,14 @@ void setup() {
     // TODO : shutdown all relays
     // --------------------
 
+    // Websocket
+    webSocket.begin(WS_SERVER_ADDRESS, WS_SERVER_PORT, "/");
+    webSocket.onEvent(webSocketEvent);
+    webSocket.setAuthorization(WS_SERVER_USER, WS_SERVER_PASSWORD);
+    webSocket.setReconnectInterval(5000);
+    Serial.println("Connected to WebSocket");
+    // --------------------
+
 }
 
 void loop() {
@@ -67,6 +81,21 @@ void loop() {
     Serial.println("HX711 not found.");
   }
   delay(1000);
+}
+
+void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
+  switch(type) {
+    case WStype_DISCONNECTED:
+      Serial.println("WebSocket Disconnected!");
+      break;
+    case WStype_CONNECTED:
+      Serial.println("WebSocket Connected!");
+      break;
+    case WStype_TEXT:
+        Serial.println("WebSocket Message!");
+        Serial.println((char*)payload);
+      break;
+  }
 }
 
 void startPump(int index, int time)
