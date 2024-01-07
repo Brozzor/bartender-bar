@@ -1,4 +1,4 @@
-const char* WS_SERVER_ADDRESS = "192.168.1.146";
-const int WS_SERVER_PORT = 8107;
-const char* WS_SERVER_USER = "esp32";
-const char* WS_SERVER_PASSWORD = "password";
+const char* WS_SERVER_ADDRESS = "192.168.1.14";
+const int WS_SERVER_PORT = 1337;
+const char* WS_SERVER_USER = "658cd64253252010991422c1";
+const char* WS_SERVER_PASSWORD = "HuYXNHAQDVBf83IX41m2";
