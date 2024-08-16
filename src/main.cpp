@@ -3,7 +3,7 @@
 #include <WiFiManager.h>
 #include <WebSocketsClient.h>
 #include "secrets.h"
-
+#include <ArduinoJson.h>
 // Websocket
 WebSocketsClient webSocket;
 
@@ -13,16 +13,22 @@ const int LOADCELL_SCK_PIN = 18;
 HX711 scale;
 
 // relays
-const unsigned int PUMP1 = 12;
-const unsigned int PUMP2 = 25;
-const unsigned int PUMP3 = 27;
-const unsigned int PUMP4 = 13;
-const unsigned int PUMP5 = 14;
-const unsigned int PUMP6 = 26;
+const unsigned int PUMP1 = 12; // IN2
+const unsigned int PUMP2 = 25; // IN6
+const unsigned int PUMP3 = 27; // IN4
+const unsigned int PUMP4 = 13; // IN1
+const unsigned int PUMP5 = 14; // IN3
+const unsigned int PUMP6 = 26; // IN5
 
 void webSocketEvent(WStype_t type, uint8_t * payload, size_t length);
-void startPump(int index, int time);
+void startPump(int index, int weight);
 void shutdownPumps();
+void order(JsonDocument doc);
+int getPumpPin(int pumpNumber);
+void handleError(String errorMessage);
+
+bool isInProgress = false;
+bool isServiceError = false;
 
 void setup() {
     Serial.begin(115200);
@@ -41,6 +47,7 @@ void setup() {
     // Weight sensor
     scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
     scale.set_scale(1397);
+    scale.tare();
     // --------------------
 
     // Relays
@@ -68,45 +75,68 @@ void loop() {
     webSocket.loop();
 
 
-    digitalWrite(PUMP1, LOW);
-    delay(10000);
-    digitalWrite(PUMP1, HIGH);
-    digitalWrite(PUMP2, LOW);
-    delay(10000);
-    digitalWrite(PUMP2, HIGH);
-    digitalWrite(PUMP3, LOW);
-    delay(10000);
-    digitalWrite(PUMP3, HIGH);
-    digitalWrite(PUMP4, LOW);
-    delay(10000);
-    digitalWrite(PUMP4, HIGH);
-    digitalWrite(PUMP5, LOW);
-    delay(10000);
-    digitalWrite(PUMP5, HIGH);
-    digitalWrite(PUMP6, LOW);
-    delay(25000);
-    digitalWrite(PUMP6, HIGH);
+    //webSocket.sendTXT("Hello from ESP32");
+    // digitalWrite(PUMP1, LOW);
+    // delay(10000);
+    // digitalWrite(PUMP1, HIGH);
+    // digitalWrite(PUMP2, LOW);
+    // delay(10000);
+    // digitalWrite(PUMP2, HIGH);
+    // digitalWrite(PUMP3, LOW);
+    // delay(10000);
+    // digitalWrite(PUMP3, HIGH);
+    // digitalWrite(PUMP4, LOW);
+    // delay(10000);
+    // digitalWrite(PUMP4, HIGH);
+    // digitalWrite(PUMP5, LOW);
+    // delay(10000);
+    // digitalWrite(PUMP5, HIGH);
+    // digitalWrite(PUMP6, LOW);
+    // delay(25000);
+    // digitalWrite(PUMP6, HIGH);
     // send weight to server
     // long reading = scale.get_units(10);
     // webSocket.sendTXT(String(reading).c_str());
-    //webSocket.sendTXT("Hello from ESP32");
-    //delay(1000);
-//   if (scale.is_ready()) {
-//     //scale.set_scale();    
-//     Serial.println("Tare... remove any weights from the scale.");
-//     delay(5000);
-//     scale.tare();
-//     Serial.println("Tare done...");
-//     Serial.print("Place a known weight on the scale...");
-//     delay(5000);
-//     long reading = scale.get_units(10);
-//     Serial.print("Result: ");
-//     Serial.println(reading);
-//   } 
-//   else {
-//     Serial.println("HX711 not found.");
-//   }
-//   delay(1000);
+    // webSocket.sendTXT("Hello from ESP32");
+  // if (scale.is_ready()) {
+  //   scale.set_scale();    
+  //   Serial.println("Tare... remove any weights from the scale.");
+  //   delay(5000);
+  //   scale.tare();
+  //   Serial.println("Tare done...");
+  //   Serial.print("Place a known weight on the scale...");
+  //   delay(5000);
+  //   long reading = scale.get_units(10);
+  //   Serial.print("Result: ");
+  //   Serial.println(reading);
+  // } 
+  // else {
+  //   Serial.println("HX711 not found.");
+  // }
+  // delay(1000);
+}
+
+void order(JsonDocument doc) {
+    Serial.println("order started");
+    if (isInProgress) {
+        handleError("IN_PROGRESS");
+        return;
+    }
+    isInProgress = true;
+    JsonObject pumps = doc["pumps"];
+    for (JsonPair pump : pumps) {
+        String pumpNumber = pump.key().c_str();
+        int maxWeight = pump.value().as<int>();
+        startPump(pumpNumber.toInt(), maxWeight);
+        Serial.println("Pump " + pumpNumber);
+        if (isServiceError) {
+            Serial.println("Service error");
+            isServiceError = false;
+            break;
+        }
+    }
+    isInProgress = false;
+
 }
 
 void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
@@ -118,21 +148,80 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
       Serial.println("WebSocket Connected!");
       break;
     case WStype_TEXT:
-        Serial.println("WebSocket Message!");
+      Serial.println("WebSocket Message!");
+        String jsonStr = String((char*)payload);
+        JsonDocument doc;
+        DeserializationError error = deserializeJson(doc, jsonStr);
+        if (error) {
+            Serial.print(F("Erreur de parsing JSON: "));
+            Serial.println(error.f_str());
+            return;
+        }
+        String type = doc["type"];
+        if (type == "ORDER") {
+          order(doc);
+        }
+
+        Serial.println("type: " + type);
         Serial.println((char*)payload);
       break;
   }
 }
 
-void startPump(int index, int time)
+void startPump(int index, int targetWeight)
 {
-    if (time == 0)
-    {
+    int pumpNumber = 0;
+    switch (index) {
+        case 1: pumpNumber = PUMP1; break;
+        case 2: pumpNumber = PUMP2; break;
+        case 3: pumpNumber = PUMP3; break;
+        case 4: pumpNumber = PUMP4; break;
+        case 5: pumpNumber = PUMP5; break;
+        case 6: pumpNumber = PUMP6; break;
+        default: pumpNumber = -1;
+    }
+    Serial.println("Démarrage de la pompe " + String(index) + " avec un poids demander de " + String(targetWeight) + "g");
+    int totalTime = 0;
+    unsigned long startTime = millis();
+    long startWeight = scale.get_units(10);
+    Serial.println("Poids de départ : " + String(startWeight) + " g");
+    if (startWeight <= 10) {
+        Serial.println("Aucun poids détecté pour la pompe " + String(index));
+        handleError("NO_GLASS");
         return;
     }
-    digitalWrite(index, LOW);
-    delay(time);
-    digitalWrite(index, HIGH);
+    digitalWrite(pumpNumber, LOW);
+    int lastWeight = 0;
+    while (true) {
+        unsigned long startWeighting = millis();
+        long currentWeight = scale.get_units(5);
+        
+        Serial.println("Poids actuel : " + String(currentWeight) + " g");
+        Serial.println("Poids moins le poids de depart : " + String((currentWeight - startWeight)) + " g");
+
+        if ((currentWeight - startWeight) >= targetWeight) {
+            Serial.println("Poids cible atteint pour la pompe " + String(index));
+            break;
+        }
+
+        if ((lastWeight - 50) > currentWeight) {
+            Serial.println("Le verre a ete retirer " + String(index));
+            handleError("GLASS_WITHDRAWN_" + String(index));
+            break;
+        }
+        lastWeight = currentWeight;
+        unsigned long endWeighting = millis();
+        Serial.print("Temps écoulé pour la boucle  : ");
+        Serial.print(String(endWeighting - startWeighting));
+        Serial.println(" ms");
+        totalTime += (endWeighting - startWeighting);
+        if (totalTime >= 20000) {
+            Serial.println("Temps d'attente dépassé pour la pompe " + String(index));
+            handleError("TIMEOUT_PUMP_" + String(index));
+            break;
+        }
+    }
+    digitalWrite(pumpNumber, HIGH);
 }
 
 void shutdownPumps()
@@ -143,4 +232,12 @@ void shutdownPumps()
     digitalWrite(PUMP4, HIGH);
     digitalWrite(PUMP5, HIGH);
     digitalWrite(PUMP6, HIGH);
+}
+
+void handleError(String errorMessage) {
+    Serial.println("Erreur : " + errorMessage);
+    shutdownPumps();
+    isInProgress = false;
+    isServiceError = true;
+    webSocket.sendTXT("{\"type\":\"ERROR\",\"message\":\"" + errorMessage + "\"}");
 }
